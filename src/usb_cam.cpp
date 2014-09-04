@@ -47,6 +47,7 @@
 #include <sys/time.h>
 #include <sys/mman.h>
 #include <sys/ioctl.h>
+#include <bitset>
 
 #include <asm/types.h>          /* for videodev2.h */
 
@@ -72,7 +73,8 @@ struct buffer
 
 static char *camera_dev;
 static unsigned int pixelformat;
-static bool monochrome;
+static bool raw;
+static int raw_bits;
 static usb_cam_io_method io = IO_METHOD_MMAP;
 static int fd = -1;
 struct buffer * buffers = NULL;
@@ -343,17 +345,33 @@ void uyvy2rgb(char *YUV, char *RGB, int NumPixels)
   }
 }
 
-static void mono102rgb(char *RAW, char *RGB, int NumPixels)
+static void rgb162rgb(char *YUV, char *RGB, int NumPixels)
 {
+  memcpy(RGB, YUV, NumPixels * 2);
+}
+
+
+static void raw2rgb(char *RAW, char *RGB, int NumPixels, int num_bits)
+{
+  //rgb162rgb(RAW, RGB, NumPixels);
+  
   int i, j;
-  for (i = 0, j = 0; i < (NumPixels << 1); i += 2, j += 3)
+  for (i = 0, j = 0; i < (NumPixels << 1); i += 2, j += 1)
   {
-    //first byte is low byte, second byte is high byte; smash together and convert to 8-bit
-    unsigned char grayval = ((RAW[i + 0] >> 2) & 0x3F) | ((RAW[i + 1] << 6) & 0xC0);
-    RGB[j + 0] = grayval;
-    RGB[j + 1] = grayval;
-    RGB[j + 2] = grayval;
+    //first byte is low byte, second byte is high byte; smash together and convert to 16-bit
+    unsigned char val = ((RAW[i + 0] >> (num_bits - 8)) & (0xFF >> (num_bits - 8)) | 
+			 ((RAW[i + 1] << (16 - num_bits)) & 0xFF));
+    
+    if (i < 8){
+      std::cout << (std::bitset<8>)RAW[i+0] << ' ' << (std::bitset<8>)RAW[i+1] << ": "; 
+      std::cout << (std::bitset<8>)val << "  ";
+    }
+  
+    RGB[j + 0] = val;
+    //RGB[j + 1] = val;
+    //RGB[j + 2] = val;
   }
+  std::cout << std::endl;
 }
 
 static void yuyv2rgb(char *YUV, char *RGB, int NumPixels)
@@ -361,7 +379,6 @@ static void yuyv2rgb(char *YUV, char *RGB, int NumPixels)
   int i, j;
   unsigned char y0, y1, u, v;
   unsigned char r, g, b;
-
   for (i = 0, j = 0; i < (NumPixels << 1); i += 4, j += 6)
   {
     y0 = (unsigned char)YUV[i + 0];
@@ -479,9 +496,9 @@ static void process_image(const void * src, int len, usb_cam_camera_image_t *des
 {
   if (pixelformat == V4L2_PIX_FMT_YUYV)
   {
-    if (monochrome)
+    if (raw)
     { //actually format V4L2_PIX_FMT_Y16, but xioctl gets unhappy if you don't use the advertised type (yuyv)
-      mono102rgb((char*)src, dest->image, dest->width * dest->height);
+      raw2rgb((char*)src, dest->image, dest->width * dest->height, raw_bits);
     }
     else
     {
@@ -1015,7 +1032,7 @@ usb_cam_camera_image_t *usb_cam_camera_start(const char* dev, usb_cam_io_method 
 
   usb_cam_camera_image_t *image;
   io = io_method;
-  monochrome = false;
+  raw = false;
   if (pixel_format == PIXEL_FORMAT_YUYV)
     pixelformat = V4L2_PIX_FMT_YUYV;
   else if (pixel_format == PIXEL_FORMAT_UYVY)
@@ -1025,11 +1042,17 @@ usb_cam_camera_image_t *usb_cam_camera_start(const char* dev, usb_cam_io_method 
     pixelformat = V4L2_PIX_FMT_MJPEG;
     init_mjpeg_decoder(image_width, image_height);
   }
-  else if (pixel_format == PIXEL_FORMAT_YUVMONO10)
+  else if (pixel_format == PIXEL_FORMAT_YUVRAW10 || pixel_format == PIXEL_FORMAT_YUVRAW12)
   {
-    //actually format V4L2_PIX_FMT_Y16 (10-bit mono expresed as 16-bit pixels), but we need to use the advertised type (yuyv)
+    //actually format V4L2_PIX_FMT_Y16 (10-bit raw expresed as 16-bit pixels), but we need to use the advertised type (yuyv)
     pixelformat = V4L2_PIX_FMT_YUYV;
-    monochrome = true;
+    raw = true;
+    if (pixel_format == PIXEL_FORMAT_YUVRAW10) {
+      raw_bits = 10;
+    }
+    else {
+      raw_bits = 12;
+    }
   }
   else if (pixel_format == PIXEL_FORMAT_RGB24)
   {

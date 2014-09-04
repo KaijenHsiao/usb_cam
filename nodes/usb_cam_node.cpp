@@ -56,6 +56,7 @@ public:
   std::string video_device_name_, io_method_name_, pixel_format_name_, camera_name_, camera_info_url_;
   int image_width_, image_height_, framerate_, exposure_;
   bool autofocus_, autoexposure_;
+  std::string output_encoding_str_;
   boost::shared_ptr<camera_info_manager::CameraInfoManager> cinfo_;
 
   UsbCamNode() :
@@ -72,13 +73,15 @@ public:
     node_.param("image_width", image_width_, 640);
     node_.param("image_height", image_height_, 480);
     node_.param("framerate", framerate_, 30);
-    // possible values: yuyv, uyvy, mjpeg, yuvmono10, rgb24
+    // possible values: yuyv, uyvy, mjpeg, yuvraw10, yuvraw12, rgb24
     node_.param("pixel_format", pixel_format_name_, std::string("mjpeg"));
     // enable/disable autofocus
     node_.param("autofocus", autofocus_, false);
     // enable/disable autoexposure
     node_.param("autoexposure", autoexposure_, true);
     node_.param("exposure", exposure_, 100);
+    // for labeling Bayer images with their encoding types
+    node_.param("output_encoding_str", output_encoding_str_, std::string("bayer_grbg8"));//std::string("rgb8"));
 
     // load the camera info
     node_.param("camera_frame_id", img_.header.frame_id, std::string("head_camera"));
@@ -112,8 +115,10 @@ public:
       pixel_format = PIXEL_FORMAT_UYVY;
     else if (pixel_format_name_ == "mjpeg")
       pixel_format = PIXEL_FORMAT_MJPEG;
-    else if (pixel_format_name_ == "yuvmono10")
-      pixel_format = PIXEL_FORMAT_YUVMONO10;
+    else if (pixel_format_name_ == "yuvraw10")
+      pixel_format = PIXEL_FORMAT_YUVRAW10;
+    else if (pixel_format_name_ == "yuvraw12")
+      pixel_format = PIXEL_FORMAT_YUVRAW12;
     else if (pixel_format_name_ == "rgb24")
       pixel_format = PIXEL_FORMAT_RGB24;
     else
@@ -156,7 +161,7 @@ public:
     // grab the image
     usb_cam_camera_grab_image(camera_image_);
     // fill the info
-    fillImage(img_, "rgb8", camera_image_->height, camera_image_->width, 3 * camera_image_->width,
+    fillImage(img_, output_encoding_str_, camera_image_->height, camera_image_->width, 1 * camera_image_->width,
               camera_image_->image);
     // stamp the image
     img_.header.stamp = ros::Time::now();
